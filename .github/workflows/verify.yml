@@ -41,3 +41,5 @@ jobs:
         run: ./scripts/Package-Preview.ps1 -SkipBuild
       - name: Test privileged service on disposable runner
         run: ./scripts/Test-BrokerService.ps1 -DisposableEnvironment
+      - name: Test native WFP and watchdog recovery on disposable runner
+        run: ./scripts/Test-WfpRecovery.ps1 -DisposableEnvironment

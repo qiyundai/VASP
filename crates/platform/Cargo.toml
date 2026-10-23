@@ -14,6 +14,14 @@ sha2.workspace = true
 hex.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows.workspace = true
+windows = { workspace = true, features = ["Win32_System_WindowsProgramming"] }
 winreg = "=0.55.0"
 wmi = "=0.18.4"
+
+[features]
+# Disposable-VM fault-injection harness; never enabled or packaged in production.
+wfp-recovery-tests = []
+
+[[example]]
+name = "wfp-recovery"
+required-features = ["wfp-recovery-tests"]

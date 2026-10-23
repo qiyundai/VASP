@@ -57,6 +57,15 @@ impl DynamicSession {
             Win32::NetworkManagement::WindowsFilteringPlatform::*,
             core::{GUID, PCWSTR, PWSTR},
         };
+        anyhow::ensure!(
+            target.port() != 0 && !target.address().is_unspecified(),
+            "Exact address and port required"
+        );
+        anyhow::ensure!(
+            !target.application().contains('\0')
+                && std::path::Path::new(target.application()).is_absolute(),
+            "Absolute application path required"
+        );
         let name: Vec<u16> = target.application().encode_utf16().chain(Some(0)).collect();
         struct Blob(*mut FWP_BYTE_BLOB);
         impl Drop for Blob {
@@ -166,6 +175,42 @@ impl DynamicSession {
             )
         })
     }
+
+    /// Read a filter key for recovery assertions; no borrowed WFP pointers escape.
+    #[cfg(feature = "wfp-recovery-tests")]
+    pub fn key(&self, id: u64) -> Result<uuid::Uuid> {
+        use windows::Win32::NetworkManagement::WindowsFilteringPlatform::*;
+        let mut filter = std::ptr::null_mut();
+        check(unsafe { FwpmFilterGetById0(self.handle, id, &mut filter) })?;
+        let key = unsafe { (*filter).filterKey.to_u128() };
+        unsafe {
+            FwpmFreeMemory0(&mut filter as *mut _ as *mut *mut std::ffi::c_void);
+        }
+        Ok(uuid::Uuid::from_u128(key))
+    }
+
+    #[cfg(feature = "wfp-recovery-tests")]
+    pub fn contains_key(&self, key: uuid::Uuid) -> Result<bool> {
+        use windows::Win32::{
+            Foundation::FWP_E_FILTER_NOT_FOUND, NetworkManagement::WindowsFilteringPlatform::*,
+        };
+        let mut filter = std::ptr::null_mut();
+        let code = unsafe {
+            FwpmFilterGetByKey0(
+                self.handle,
+                &windows::core::GUID::from_u128(key.as_u128()),
+                &mut filter,
+            )
+        };
+        if code == FWP_E_FILTER_NOT_FOUND.0 as u32 {
+            return Ok(false);
+        }
+        check(code)?;
+        unsafe {
+            FwpmFreeMemory0(&mut filter as *mut _ as *mut *mut std::ffi::c_void);
+        }
+        Ok(true)
+    }
 }
 #[cfg(windows)]
 fn check(code: u32) -> Result<()> {
@@ -185,44 +230,120 @@ impl Drop for DynamicSession {
     }
 }
 
-/// Monotonic deadlines bound leases; wall deadlines also catch sleep and clock jumps.
+/// Interrupt time includes sleep. No wall-clock correction can extend this deadline.
+#[cfg(windows)]
+pub fn recovery_sample() -> vasp_core::recovery::Sample {
+    vasp_core::recovery::Sample {
+        // SAFETY: no pointers; Windows supplies a boot-relative 100ns clock including sleep.
+        awake_and_sleep_ms: unsafe {
+            windows::Win32::System::WindowsProgramming::QueryInterruptTime()
+        } / 10_000,
+        wall_seconds: vasp_core::now(),
+    }
+}
+
+/// Native lease expiry. The independent supervisor is still required for a hung owner.
+/// An expiry failure closes the entire dynamic session instead of retaining filters.
 pub struct LeaseSession {
-    session: DynamicSession,
-    leases: Vec<(u64, std::time::Instant, u64)>,
+    session: Option<DynamicSession>,
+    leases: Vec<(u64, vasp_core::recovery::RecoveryGuard, u64)>,
 }
 #[cfg(windows)]
 impl LeaseSession {
     pub fn open() -> Result<Self> {
         Ok(Self {
-            session: DynamicSession::open()?,
+            session: Some(DynamicSession::open()?),
             leases: vec![],
         })
     }
     pub fn add(&mut self, target: &BlockTarget, expires_at: u64) -> Result<u64> {
-        let now = vasp_core::now();
-        if expires_at <= now || expires_at - now > 600 || self.leases.len() >= 3 {
+        self.expire()?;
+        let now = recovery_sample();
+        if expires_at <= now.wall_seconds
+            || expires_at - now.wall_seconds > 600
+            || self.leases.len() >= 3
+        {
             anyhow::bail!("Invalid lease");
         }
-        let id = self.session.add(target)?;
-        self.leases.push((
-            id,
-            std::time::Instant::now() + std::time::Duration::from_secs(expires_at - now),
-            expires_at,
-        ));
+        let guard =
+            vasp_core::recovery::RecoveryGuard::new(now, expires_at - now.wall_seconds, 10_000)
+                .map_err(anyhow::Error::msg)?;
+        let id = self
+            .session
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Session invalidated"))?
+            .add(target)?;
+        self.leases.push((id, guard, 0));
         Ok(id)
     }
     pub fn expire(&mut self) -> Result<()> {
-        let now = std::time::Instant::now();
-        let wall = vasp_core::now();
-        let mut keep = vec![];
-        for &(id, deadline, expires) in &self.leases {
-            if now >= deadline || wall >= expires {
-                self.session.remove(id)?;
-            } else {
-                keep.push((id, deadline, expires));
+        use vasp_core::recovery::StopReason;
+        let now = recovery_sample();
+        let result = (|| -> Result<()> {
+            let session = self
+                .session
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Session invalidated"))?;
+            // Per-lease sequence is advanced only once per poll, including newly added leases.
+            for (id, guard, sequence) in &mut self.leases {
+                *sequence = sequence
+                    .checked_add(1)
+                    .ok_or_else(|| anyhow::anyhow!("Sequence overflow"))?;
+                match guard.heartbeat(*sequence, now) {
+                    Err(StopReason::Expired) => session.remove(*id)?,
+                    Err(reason) => anyhow::bail!(reason),
+                    Ok(()) => {}
+                }
             }
+            self.leases
+                .retain_mut(|(_, guard, _)| guard.check(now).is_ok());
+            Ok(())
+        })();
+        if result.is_err() {
+            self.leases.clear();
+            self.session.take(); // Closing the dynamic session removes every owned filter.
         }
-        self.leases = keep;
+        result
+    }
+}
+
+#[cfg(all(test, windows, feature = "wfp-recovery-tests"))]
+mod recovery_tests {
+    use super::*;
+    #[test]
+    #[ignore = "Creates dynamic WFP filters; disposable elevated VM only"]
+    fn expiry_failure_closes_every_filter_and_invalidates_session() -> Result<()> {
+        anyhow::ensure!(
+            std::env::var("VASP_DISPOSABLE_WFP_TEST").as_deref() == Ok("1"),
+            "Explicit disposable-VM opt-in required"
+        );
+        let target = BlockTarget::Destination {
+            application: std::env::current_exe()?.to_string_lossy().into_owned(),
+            address: std::net::Ipv4Addr::LOCALHOST.into(),
+            port: 49153,
+        };
+        let inspector = DynamicSession::open()?;
+        let mut leases = LeaseSession::open()?;
+        let first = leases.add(&target, vasp_core::now() + 2)?;
+        let second = leases.add(&target, vasp_core::now() + 30)?;
+        let second_key = inspector.key(second)?;
+        leases.add(&target, vasp_core::now() + 30)?;
+        anyhow::ensure!(
+            leases.add(&target, vasp_core::now() + 30).is_err(),
+            "Fourth lease accepted"
+        );
+        // Deterministic native deletion fault: expiry encounters a missing owned filter.
+        leases.session.as_ref().unwrap().remove(first)?;
+        std::thread::sleep(std::time::Duration::from_millis(2100));
+        anyhow::ensure!(leases.expire().is_err(), "Fault was not detected");
+        anyhow::ensure!(
+            !inspector.contains_key(second_key)?,
+            "Other filter survived failed expiry"
+        );
+        anyhow::ensure!(
+            leases.add(&target, vasp_core::now() + 30).is_err(),
+            "Invalidated session reopened"
+        );
         Ok(())
     }
 }

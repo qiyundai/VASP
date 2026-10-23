@@ -5,6 +5,7 @@ pub mod feeds;
 pub mod matching;
 pub mod policy;
 pub mod protocol;
+pub mod recovery;
 pub mod scheduler;
 pub mod updates;
 

@@ -66,3 +66,7 @@ Real local pipe tests passed for token identity, ACL rejection of an unlisted us
 The 13-case elevated suite passed on a disposable hosted Windows runner at commit `ab010c4`, including standard-user production-client authentication, forced termination and explicit restart, durable replay rejection, stalled-client stop, policy/ACL/role rejection, malformed commands and corrupt journal recovery. [Exact run and validation scope](VALIDATION.md) are recorded separately from the local tests.
 
 Still required: Windows 11 elevated and multi-session coverage, AppContainer token negative tests through the actual broker, remote SMB transport rejection tests in an isolated network, durable filesystem/power-loss fault injection, installer adversarial review, independent Windows FFI review, and the full WFP crash/hang/sleep/reboot/clock matrix. SQLite-full behavior is tested by a bounded page ceiling, not by filling a physical disk. The existing 72-hour observe-only soak exercises an older observer binary and does not validate this broker.
+
+## WFP recovery follow-up
+
+The separate [WFP recovery harness](WFP-RECOVERY.md) exercises native filter lifetimes and a Job-based watchdog prototype. It is not connected to service requests. Automatic blocking remains hard-disabled, and actual Windows 11 reboot/sleep validation and production supervisor integration are still required.

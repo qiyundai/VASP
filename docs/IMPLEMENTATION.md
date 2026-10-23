@@ -12,7 +12,7 @@ This repository contains a runnable Windows observe-only preview and security pr
 | LAN | Passive neighbors; up to ten enrolled observation clients; agent-initiated reporting; coordinator downtime backoff | Selected-interface active discovery and selected-target service checks; reliable classification of VPN/public/physical interfaces |
 | Native UI | Desktop/tray, coverage, findings/evidence, devices, schedules, reports, audit history, settings and local stop control | Enrollment wizard; validated service lifecycle; accessible notification UX; usable active-block controls after broker integration |
 | AI | Disabled by default; direct API/LAN adapters; minimal projection; hostile-output validation; request/token/cost reservations | Live configured-provider tests; multi-step constrained investigation executor; verified pricing integration; documented subscription adapter remains out of scope |
-| Bounded actions | Pure authorization/limits; dynamic WFP primitive; broker service/IPC with all proposals denied; request journal/replay/clock/quotas; 13 hosted service fault/authorization scenarios | Evidence qualification, gated WFP integration, admin activation, watchdog, transactional lease journal and full WFP crash/hang/reboot/sleep/clock recovery tests |
+| Bounded actions | Pure authorization/limits; dynamic WFP lease cleanup; broker service/IPC with all proposals denied; request journal/replay/clock/quotas; separate WFP/watchdog fault harness and deterministic clock recovery tests | Evidence qualification, gated WFP integration, admin activation, production watchdog, transactional lease journal and actual Windows 11 reboot/sleep recovery validation |
 | Updates | Pure signed-metadata/hash/expiry/rollback verifier | Authenticode, production trust roots, installer, staged rollout, key rotation, verified recovery |
 | Acceptance | Unit/regression tests, loopback mTLS, real inventory/feed tests, parser AppContainer probe, native screenshot review | Full negative TLS/IPC matrix, sustained coverage-guided fuzzing, storage fault injection, WFP VM matrix, 72-hour soak, independent security review |
 
@@ -41,3 +41,5 @@ flowchart LR
 Keep the broker independently reviewable. Do not add arbitrary execution as a shortcut for missing inventory, remediation, or enforcement operations.
 
 The next broker increment is described in [BROKER.md](BROKER.md). The updated desktop uses a Direct3D 12/FIFO renderer and a stable-height status area without a continuous busy spinner. The user reported the app-window flicker resolved after restarting into that build. The initial 72-hour observer soak continues on its original binary.
+
+WFP/watchdog test scope and the still-pending real power-transition gates are described in [WFP-RECOVERY.md](WFP-RECOVERY.md). The gated fault-injection executable is never packaged with the preview.
