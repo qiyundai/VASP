@@ -28,6 +28,8 @@ Automatic enforcement is hard-disabled in this preview. A separate broker servic
 
 Future activation requires an administrator-owned endpoint policy and authenticated local-only broker IPC, qualified local evidence validation, transactional action journals, protected management/recovery targets, three-block concurrency and rolling duration limits, and an independently tested watchdog. Dynamic WFP sessions provide cleanup when sessions end; they alone do not address hung processes, sleep/resume, or reconciliation failures. Flipping the release constant is not a supported activation procedure.
 
+An explicitly enabled, unpackaged [WFP recovery harness](docs/WFP-RECOVERY.md) tests loopback filters and a separate watchdog prototype on disposable Windows runners. This does not add production enforcement authority. Actual Windows 11 reboot/sleep transitions and protected production supervisor integration remain unvalidated; deterministic simulated clock tests do not close those gates.
+
 ## Updates and release keys
 
 The pure verifier checks signed metadata thresholds, sequence rollback, expiry, sizes, and artifact hashes. There is no deployed update installer, production trust root, Authenticode signature, staged rollout, or recovery implementation. Preview checksums are for local artifact identification, not authenticated distribution. Production signing keys must live outside endpoints and outside this repository.
