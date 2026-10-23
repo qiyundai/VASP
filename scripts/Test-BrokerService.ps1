@@ -229,8 +229,12 @@ try {
     if ($LASTEXITCODE -eq 0) { throw 'Client accepted an unavailable broker.' }
     Passed 'Unavailable service has no client fallback'
 } finally {
-    Get-WinEvent -FilterHashtable @{LogName='Application';ProviderName='VaspBroker'} -MaxEvents 5 -ErrorAction SilentlyContinue |
-        ForEach-Object { $_.Properties | ForEach-Object { Write-Output ('Broker diagnostic: ' + $_.Value) } }
+    try {
+        # A classic event source need not have an installed manifest/provider registration.
+        Get-WinEvent -LogName Application -MaxEvents 100 -ErrorAction Stop |
+            Where-Object ProviderName -eq 'VaspBroker' | Select-Object -First 5 |
+            ForEach-Object { $_.Properties | ForEach-Object { Write-Output ('Broker diagnostic: ' + $_.Value) } }
+    } catch { Write-Warning 'Broker event-log diagnostics unavailable; preserving the original test outcome.' }
     if ($installed) {
         Stop-Service VaspBroker -ErrorAction SilentlyContinue
         if ($policyBackup) { [IO.File]::WriteAllBytes($policyFile, $policyBackup) }

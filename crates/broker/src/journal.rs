@@ -372,4 +372,74 @@ mod tests {
                 .is_err()
         );
     }
+
+    #[test]
+    fn sqlite_full_rolls_back_receipt_and_recovers_without_replaying_a_success() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("broker.db");
+        let c = config();
+        let mut journal = Journal::open(&path, c.policy.device_id).unwrap();
+        let pages: u64 = journal
+            .db
+            .query_row("PRAGMA page_count", [], |r| r.get(0))
+            .unwrap();
+        // Trigger SQLite's real SQLITE_FULL path using a tiny database ceiling;
+        // never fill the host disk or alter the production storage limit.
+        journal
+            .db
+            .pragma_update(None, "max_page_count", pages)
+            .unwrap();
+        let mut failed_request = None;
+        for i in 0..256 {
+            let mut r = request(&c);
+            r.issued_at = 100 + i * 61;
+            match journal.handle(
+                &c,
+                &c.callers[0].sid,
+                r.session,
+                &r,
+                r.issued_at,
+                || unreachable!(),
+            ) {
+                Ok(receipt) => assert!(
+                    receipt.accepted && !receipt.automatic_blocking && receipt.active_blocks == 0
+                ),
+                Err(error) => {
+                    assert!(matches!(error.downcast_ref::<rusqlite::Error>(),
+                        Some(rusqlite::Error::SqliteFailure(code, _)) if code.code == rusqlite::ErrorCode::DiskFull));
+                    failed_request = Some(r);
+                    break;
+                }
+            }
+        }
+        let r = failed_request.expect("fixture must exhaust the SQLite page limit");
+        drop(journal);
+        // Reopening restores the normal bounded capacity and verifies the surviving chain.
+        let mut journal = Journal::open(&path, c.policy.device_id).unwrap();
+        let receipt = journal
+            .handle(
+                &c,
+                &c.callers[0].sid,
+                r.session,
+                &r,
+                r.issued_at,
+                || unreachable!(),
+            )
+            .unwrap();
+        assert!(receipt.accepted && !receipt.automatic_blocking && receipt.active_blocks == 0);
+        assert!(
+            !journal
+                .handle(
+                    &c,
+                    &c.callers[0].sid,
+                    r.session,
+                    &r,
+                    r.issued_at,
+                    || unreachable!()
+                )
+                .unwrap()
+                .accepted
+        );
+        journal.finish().unwrap();
+    }
 }
