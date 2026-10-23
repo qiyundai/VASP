@@ -40,7 +40,7 @@ fn service(stop: &std::sync::atomic::AtomicBool) -> anyhow::Result<()> {
         journal::Journal::open(&directory.path.join("broker.db"), config.policy.device_id)?;
     let mut server =
         broker_ipc::Server::new(PIPE, config.callers.iter().map(|c| c.sid.clone()).collect())?;
-    vasp_platform::broker_service::ready();
+    vasp_platform::broker_service::ready()?;
     while !stop.load(Ordering::SeqCst) {
         let handled = (|| -> anyhow::Result<()> {
             let Some(caller) = server.accept(Duration::from_millis(250))? else {

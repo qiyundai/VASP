@@ -411,6 +411,7 @@ pub fn inventory() -> Result<vasp_core::broker::Inventory> {
 pub struct StateDirectory {
     pub path: std::path::PathBuf,
     _guard: Handle,
+    _parent_guard: Handle,
 }
 fn secure_handle(path: &std::path::Path, directory: bool) -> Result<Handle> {
     use std::os::windows::fs::MetadataExt;
@@ -494,6 +495,7 @@ pub fn state_directory() -> Result<StateDirectory> {
         CoTaskMemFree(Some(p.0.cast()));
     }
     let path = std::path::PathBuf::from(text?).join("VASP").join("Broker");
+    let parent_guard = secure_handle(path.parent().context("Missing state parent")?, true)?;
     let guard = secure_handle(&path, true)?;
     for file in ["broker.db", "broker.db-wal", "broker.db-shm"] {
         let child = path.join(file);
@@ -504,6 +506,7 @@ pub fn state_directory() -> Result<StateDirectory> {
     Ok(StateDirectory {
         path,
         _guard: guard,
+        _parent_guard: parent_guard,
     })
 }
 pub fn read_protected_config(path: &std::path::Path) -> Result<Vec<u8>> {
@@ -526,8 +529,14 @@ mod tests {
     #[test]
     fn unlisted_user_and_oversized_frames_are_rejected() {
         let denied_name = format!(r"\\.\pipe\VASP.Test.{}", uuid::Uuid::new_v4());
-        let _server = Server::new(&denied_name, vec!["S-1-5-21-1-2-3-9999".into()]).unwrap();
-        assert!(connect(&denied_name).is_err());
+        let mut denied_server =
+            Server::new(&denied_name, vec!["S-1-5-21-1-2-3-9999".into()]).unwrap();
+        // Administrators can open the pipe via the administrative ACE, but still
+        // cannot use the protocol unless their actual user SID is enrolled.
+        if let Ok(client) = connect(&denied_name) {
+            client.write(b"VASP1").unwrap();
+            assert!(denied_server.accept(Duration::from_secs(3)).is_err());
+        }
         let name = format!(r"\\.\pipe\VASP.Test.{}", uuid::Uuid::new_v4());
         let sid = current_identity().unwrap().sid;
         let (ready, rx) = std::sync::mpsc::channel();

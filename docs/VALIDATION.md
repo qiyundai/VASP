@@ -1,5 +1,11 @@
 # Validation record
 
+## Public repository and elevated recovery suite
+
+The reviewed source-only initial commit is `015c8d11f6f8beb7a8c0ae01f2e012d961cb529f` on [qiyundai/VASP](https://github.com/qiyundai/VASP). Its live default branch is `trunk`. Gitleaks 8.30.1 found no secrets in the staged publication; runtime data, keys, credentials, binaries, local tools and logs were excluded. Public commits use a GitHub no-reply address. GitHub secret scanning, push protection, private vulnerability reporting and dependency alerts are enabled. This is a publication check, not a security certification.
+
+The first hosted run exposed a test assumption: administrators can open the pipe via its administrative ACL. The updated test checks that an unlisted administrator is rejected by token-based protocol authorization. Local verification of the revised workspace passes all 41 tests. The expanded elevated service suite and service-status/installer hardening are awaiting hosted validation; automatic blocking remains hard-disabled.
+
 ## Broker and renderer increment
 
 The final broker/IPC workspace suite passes **41 tests with zero failures**. Production crates pass Clippy with no source diagnostics; Rust formatting and PowerShell syntax checks pass. An optimized workspace build produced `vasp-broker.exe`, `vasp.exe`, and the Direct3D 12 desktop. The native screenshot smoke test exited successfully and the user confirmed that the restarted app window now looks stable. The staged CLI's AppContainer smoke check again denied private-file reads, public network connections, and child processes.

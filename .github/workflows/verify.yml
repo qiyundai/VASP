@@ -5,6 +5,7 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Install pinned toolchain
@@ -20,4 +21,4 @@ jobs:
       - name: Package broker preview
         run: ./scripts/Package-Preview.ps1 -SkipBuild
       - name: Test privileged service on disposable runner
-        run: ./scripts/Test-BrokerService.ps1
+        run: ./scripts/Test-BrokerService.ps1 -DisposableEnvironment

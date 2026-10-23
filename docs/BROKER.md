@@ -40,7 +40,7 @@ Build/package first. Copy the repository preview and scripts to the VM. Obtain t
 .\scripts\Install-Broker.ps1 -DeviceId <endpoint-uuid> -OperatorSid <user-sid> -AllowUnsignedPreview
 ```
 
-The script installs the fixed executable in Program Files, gives binaries and policy fresh SYSTEM/Administrators-only ACLs, registers a manual-start LocalSystem service, and starts it. The explicit unsigned-preview flag is for development testing; there is no production signature chain yet. Existing installations are not overwritten. No firewall exception or automatic-block permission is created.
+The script installs the fixed executable in Program Files, creates the state parent and child with SYSTEM/Administrators-only ACLs atomically, gives binaries and policy fresh protected ACLs, registers a manual-start LocalSystem service, and starts it. The broker validates and holds both state directories against replacement while running. The explicit unsigned-preview flag is for development testing; there is no production signature chain yet. Existing installations or state parents are not overwritten. No firewall exception or automatic-block permission is created.
 
 From the enrolled user's session, using the same endpoint data directory:
 
@@ -53,7 +53,9 @@ From the enrolled user's session, using the same endpoint data directory:
 
 The desktop's Settings page also has a local broker check and stop/remove controls. An absent or unauthorized broker produces an error; no unprivileged fallback is presented as successful privileged execution.
 
-`scripts/Test-BrokerService.ps1` is an elevated disposable-VM integration harness for SCM authentication, typed operations, stop/restart, and absence handling. It removes its SCM registration on normal cleanup while preserving protected files for diagnostics. It deliberately refuses an existing service. CI includes this harness, but there is no Git remote and therefore no CI run to claim. This session had a non-administrator token; elevated installation/SCM positive-path tests remain unexecuted here.
+`scripts/Test-BrokerService.ps1 -DisposableEnvironment` is an elevated disposable-VM integration harness. It tests SCM-authenticated typed operations; device/session/policy/time rejection; fabricated block evidence; replay across clean restart and forced process termination; bounded stop with a stalled client; malformed messages; enabled policy, loose policy ACLs, and corrupt journal rejection; observer-role limits; and unavailable-service handling. It removes its SCM registration on cleanup while preserving protected files for diagnostics. It refuses existing service/state and never creates a packet filter. Results are written to the ignored test data directory. A stalled client is not a hung broker-process test.
+
+The public repository is [qiyundai/VASP](https://github.com/qiyundai/VASP), with live default branch `trunk`. Its hosted Windows CI runs the elevated harness on a disposable runner. Consult [validation evidence](VALIDATION.md) for actual results rather than inferring success from the presence of a test. The development PC still has no installed broker service.
 
 ## Validation and open gates
 

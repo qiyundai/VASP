@@ -16,7 +16,8 @@ if (-not $AllowUnsignedPreview) { throw 'This development broker is not a signed
 if (Get-Service -Name VaspBroker -ErrorAction SilentlyContinue) { throw 'VaspBroker already exists. Stop and review the existing installation before replacing it.' }
 $install = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'VASP Broker'
 $state = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'VASP\Broker'
-foreach ($path in @($install, $state)) {
+$stateParent = Split-Path $state -Parent
+foreach ($path in @($install, $stateParent, $state)) {
     if (Test-Path -LiteralPath $path) { throw "Refusing to overwrite existing broker directory: $path" }
     $ancestor = Split-Path $path -Parent
     while ($ancestor) {
@@ -27,9 +28,9 @@ foreach ($path in @($install, $state)) {
 # Only SYSTEM and Administrators may read/modify service code and broker policy/journal.
 $acl = [System.Security.AccessControl.DirectorySecurity]::new()
 $acl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)')
-foreach ($path in @($install, $state)) {
-    New-Item -ItemType Directory -Path $path -Force | Out-Null
-    Set-Acl -LiteralPath $path -AclObject $acl
+foreach ($path in @($install, $stateParent, $state)) {
+    # Set the ACL at creation, avoiding an initially user-accessible state directory.
+    [IO.FileSystemAclExtensions]::Create([IO.DirectoryInfo]::new($path), $acl)
 }
 $binary = Join-Path $install 'vasp-broker.exe'
 Copy-Item -LiteralPath $source -Destination $binary
