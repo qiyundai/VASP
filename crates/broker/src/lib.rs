@@ -71,7 +71,9 @@ fn service(stop: &std::sync::atomic::AtomicBool) -> anyhow::Result<()> {
                 broker_ipc::inventory,
             )?;
             stage = "send receipt";
-            server.channel().write(&serde_json::to_vec(&response)?)?;
+            server
+                .channel()
+                .write_receipt(&serde_json::to_vec(&response)?)?;
             Ok(true)
         })();
         // Malformed/unauthorized connections cannot shut down the service or create actions.

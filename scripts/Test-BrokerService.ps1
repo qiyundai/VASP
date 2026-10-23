@@ -102,7 +102,9 @@ function Invoke-Wire([hashtable]$command, [hashtable]$overrides = @{}) {
             policy_version=$hello.policy_version;issued_at=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds();command=$command}
         foreach ($key in $overrides.Keys) { $request[$key] = $overrides[$key] }
         Write-Frame $pipe ($request | ConvertTo-Json -Depth 12 -Compress)
-        return Read-Frame $pipe
+        $receipt = Read-Frame $pipe
+        Write-Frame $pipe 'VASP_RECEIVED'
+        return $receipt
     } finally { $pipe.Dispose() }
 }
 try {

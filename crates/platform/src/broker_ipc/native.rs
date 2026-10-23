@@ -206,6 +206,15 @@ impl Channel {
         frame.extend_from_slice(bytes);
         self.exact(&mut frame, true)
     }
+    pub fn write_receipt(&self, bytes: &[u8]) -> Result<()> {
+        self.write(bytes)?;
+        // DisconnectNamedPipe discards unread bytes. A bounded acknowledgement
+        // ensures delivery without FlushFileBuffers' unbounded wait on the client.
+        if self.read()? != vasp_core::broker::RECEIPT_ACK {
+            bail!("IPC receipt acknowledgement rejected");
+        }
+        Ok(())
+    }
 }
 
 pub struct Server {
@@ -662,7 +671,7 @@ mod tests {
             assert_eq!(who.sid, thread_sid);
             assert!(!who.app_container);
             assert_eq!(server.channel().read().unwrap(), b"typed request");
-            server.channel().write(b"typed response").unwrap();
+            server.channel().write_receipt(b"typed response").unwrap();
             // A short silent client cannot indefinitely retain the pipe.
             server.channel.deadline = Instant::now() + Duration::from_millis(50);
             assert!(server.channel().read().is_err());
@@ -677,7 +686,10 @@ mod tests {
         assert!(verify_service_server(client.handle.0).is_err());
         client.write(b"VASP1").unwrap();
         client.write(b"typed request").unwrap();
+        // The service must retain its response even when the client is scheduled later.
+        std::thread::sleep(Duration::from_millis(50));
         assert_eq!(client.read().unwrap(), b"typed response");
+        client.write(vasp_core::broker::RECEIPT_ACK).unwrap();
         server.join().unwrap();
     }
 

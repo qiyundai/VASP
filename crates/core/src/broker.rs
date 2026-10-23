@@ -7,6 +7,7 @@ pub const SERVICE: &str = "VaspBroker";
 pub const PIPE: &str = r"\\.\pipe\VASP.Broker.v1";
 pub const VERSION: u16 = 1;
 pub const MAX_FRAME: usize = 16 * 1024;
+pub const RECEIPT_ACK: &[u8] = b"VASP_RECEIVED";
 /// Compile-time gate. There is deliberately no config, CLI, IPC or model override.
 pub const ENFORCEMENT_ENABLED: bool = false;
 

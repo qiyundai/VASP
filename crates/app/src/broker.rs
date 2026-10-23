@@ -33,6 +33,7 @@ pub fn request(command: Command, expected_device: uuid::Uuid) -> Result<Response
         {
             bail!("Unexpected broker response; blocking remains disabled");
         }
+        pipe.write(RECEIPT_ACK)?;
         Ok(response)
     }
     #[cfg(not(windows))]
