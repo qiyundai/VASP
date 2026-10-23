@@ -229,6 +229,8 @@ try {
     if ($LASTEXITCODE -eq 0) { throw 'Client accepted an unavailable broker.' }
     Passed 'Unavailable service has no client fallback'
 } finally {
+    Get-WinEvent -FilterHashtable @{LogName='Application';ProviderName='VaspBroker'} -MaxEvents 5 -ErrorAction SilentlyContinue |
+        ForEach-Object { $_.Properties | ForEach-Object { Write-Output ('Broker diagnostic: ' + $_.Value) } }
     if ($installed) {
         Stop-Service VaspBroker -ErrorAction SilentlyContinue
         if ($policyBackup) { [IO.File]::WriteAllBytes($policyFile, $policyBackup) }

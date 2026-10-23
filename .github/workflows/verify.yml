@@ -9,7 +9,8 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Cache Rust dependencies and build outputs
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        id: rust-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
@@ -23,6 +24,15 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked
       - run: cargo test --workspace --locked
       - run: cargo build --workspace --release --locked
+        id: release
+      - name: Save compiled outputs before service fault injection
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
       - name: Check parser isolation
         run: |
           target/release/vasp.exe --data data/ci init

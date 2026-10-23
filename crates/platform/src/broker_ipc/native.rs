@@ -211,6 +211,33 @@ impl Channel {
 pub struct Server {
     channel: Channel,
     allowed: Vec<String>,
+    pending: Option<PendingConnect>,
+}
+struct PendingConnect {
+    event: Handle,
+    overlapped: Box<OVERLAPPED>,
+}
+impl Server {
+    fn cancel_connect(&mut self) {
+        if let Some(pending) = self.pending.take() {
+            let mut count = 0;
+            unsafe {
+                let _ = CancelIoEx(self.channel.handle.0, Some(&*pending.overlapped));
+                let _ = GetOverlappedResult(
+                    self.channel.handle.0,
+                    &*pending.overlapped,
+                    &mut count,
+                    true,
+                );
+            }
+        }
+    }
+}
+impl Drop for Server {
+    fn drop(&mut self) {
+        // Pending OVERLAPPED storage and event must outlive cancellation completion.
+        self.cancel_connect();
+    }
 }
 impl Server {
     pub fn new(name: &str, allowed: Vec<String>) -> Result<Self> {
@@ -270,41 +297,53 @@ impl Server {
                 deadline: Instant::now(),
             },
             allowed,
+            pending: None,
         })
     }
     pub fn accept(&mut self, timeout: Duration) -> Result<Option<Identity>> {
-        let event = Handle(unsafe { CreateEventW(None, true, false, None)? });
-        let mut overlapped = OVERLAPPED {
-            hEvent: event.0,
-            ..Default::default()
-        };
-        let result = unsafe { ConnectNamedPipe(self.channel.handle.0, Some(&mut overlapped)) };
-        match result {
-            Err(e) if is_error(&e, ERROR_PIPE_CONNECTED) => {}
-            Err(e) if is_error(&e, ERROR_IO_PENDING) => {
-                let mut count = 0;
-                if unsafe {
-                    WaitForSingleObject(event.0, timeout.as_millis().min(u32::MAX as u128) as u32)
-                } != WAIT_OBJECT_0
-                {
-                    unsafe {
-                        let _ = CancelIoEx(self.channel.handle.0, Some(&overlapped));
-                        let _ = GetOverlappedResult(
-                            self.channel.handle.0,
-                            &overlapped,
-                            &mut count,
-                            true,
-                        );
-                        let _ = DisconnectNamedPipe(self.channel.handle.0);
-                    }
-                    return Ok(None);
-                }
-                unsafe {
-                    GetOverlappedResult(self.channel.handle.0, &overlapped, &mut count, false)?;
-                }
+        if self.pending.is_none() {
+            let event = Handle(unsafe { CreateEventW(None, true, false, None)? });
+            let mut pending = PendingConnect {
+                overlapped: Box::new(OVERLAPPED {
+                    hEvent: event.0,
+                    ..Default::default()
+                }),
+                event,
+            };
+            match unsafe { ConnectNamedPipe(self.channel.handle.0, Some(&mut *pending.overlapped)) }
+            {
+                Err(e) if is_error(&e, ERROR_PIPE_CONNECTED) => {}
+                Err(e) if is_error(&e, ERROR_IO_PENDING) => self.pending = Some(pending),
+                Err(e) => return Err(e.into()),
+                Ok(()) => self.pending = Some(pending),
             }
-            Err(e) => return Err(e.into()),
-            Ok(()) => {}
+        }
+        if let Some(pending) = &self.pending {
+            let wait = unsafe {
+                WaitForSingleObject(
+                    pending.event.0,
+                    timeout.as_millis().min(u32::MAX as u128) as u32,
+                )
+            };
+            if wait == WAIT_TIMEOUT {
+                // Keep the same connect pending across stop checks. Cancelling and
+                // disconnecting each poll can drop a client that just connected.
+                return Ok(None);
+            }
+            if wait != WAIT_OBJECT_0 {
+                self.cancel_connect();
+                bail!("IPC connection wait failed");
+            }
+            let pending = self.pending.take().context("Missing pending connect")?;
+            let mut count = 0;
+            unsafe {
+                GetOverlappedResult(
+                    self.channel.handle.0,
+                    &*pending.overlapped,
+                    &mut count,
+                    false,
+                )?;
+            }
         }
         self.channel.deadline = Instant::now() + Duration::from_secs(5);
         // Read a fixed preface BEFORE impersonation: Windows uses the last message read.
@@ -359,15 +398,7 @@ impl Drop for ServiceHandle {
         }
     }
 }
-fn verify_service_server(pipe: HANDLE) -> Result<()> {
-    let mut pid = 0;
-    let mut session = u32::MAX;
-    unsafe {
-        GetNamedPipeServerProcessId(pipe, &mut pid)?;
-        GetNamedPipeServerSessionId(pipe, &mut session)?;
-    }
-    // Do not open SYSTEM's process token: standard callers cannot do that without
-    // debug privilege. Authenticate the connected object and authoritative SCM state.
+fn pipe_owner(pipe: HANDLE) -> Result<String> {
     let mut owner = PSID::default();
     let mut sd = PSECURITY_DESCRIPTOR::default();
     unsafe {
@@ -384,7 +415,18 @@ fn verify_service_server(pipe: HANDLE) -> Result<()> {
         .ok()?;
     }
     let _sd = Local(sd);
-    if session != 0 || !matches!(sid_string(owner)?.as_str(), "S-1-5-18" | "S-1-5-32-544") {
+    sid_string(owner)
+}
+fn verify_service_server(pipe: HANDLE) -> Result<()> {
+    let mut pid = 0;
+    let mut session = u32::MAX;
+    unsafe {
+        GetNamedPipeServerProcessId(pipe, &mut pid)?;
+        GetNamedPipeServerSessionId(pipe, &mut session)?;
+    }
+    // Do not open SYSTEM's process token: standard callers cannot do that without
+    // debug privilege. Authenticate the connected object and authoritative SCM state.
+    if session != 0 || !matches!(pipe_owner(pipe)?.as_str(), "S-1-5-18" | "S-1-5-32-544") {
         bail!("Pipe is not owned by a privileged session-zero service");
     }
     let scm = ServiceHandle(unsafe { OpenSCManagerW(None, None, SC_MANAGER_CONNECT)? });
@@ -611,6 +653,10 @@ mod tests {
         let thread_sid = sid.clone();
         let server = std::thread::spawn(move || {
             let mut server = Server::new(&thread_name, vec![thread_sid.clone()]).unwrap();
+            // A client arriving after several idle service polls must not be disconnected.
+            for _ in 0..3 {
+                assert!(server.accept(Duration::from_millis(10)).unwrap().is_none());
+            }
             ready.send(()).unwrap();
             let who = server.accept(Duration::from_secs(3)).unwrap().unwrap();
             assert_eq!(who.sid, thread_sid);
@@ -623,13 +669,26 @@ mod tests {
             server.disconnect();
         });
         rx.recv().unwrap();
-        assert!(Server::new(&name, vec![sid]).is_err());
+        assert!(Server::new(&name, vec![sid.clone()]).is_err());
         let client = connect(&name).unwrap();
+        let owner = pipe_owner(client.handle.0).unwrap();
+        assert!(owner == sid || owner == "S-1-5-32-544");
         // Production authentication must reject this ordinary-user test server.
         assert!(verify_service_server(client.handle.0).is_err());
         client.write(b"VASP1").unwrap();
         client.write(b"typed request").unwrap();
         assert_eq!(client.read().unwrap(), b"typed response");
         server.join().unwrap();
+    }
+
+    #[test]
+    fn pending_connection_is_cancelled_before_server_storage_is_freed() {
+        let name = format!(r"\\.\pipe\VASP.Test.{}", uuid::Uuid::new_v4());
+        let sid = current_identity().unwrap().sid;
+        let mut server = Server::new(&name, vec![sid.clone()]).unwrap();
+        assert!(server.accept(Duration::from_millis(10)).unwrap().is_none());
+        drop(server);
+        // The old asynchronous operation and pipe instance must be fully gone.
+        let _replacement = Server::new(&name, vec![sid]).unwrap();
     }
 }

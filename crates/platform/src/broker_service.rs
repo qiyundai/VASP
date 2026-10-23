@@ -15,6 +15,38 @@ mod native {
     static STATUS_LOCK: Mutex<()> = Mutex::new(());
     type Entry = fn(&AtomicBool) -> Result<()>;
     static ENTRY: OnceLock<Entry> = OnceLock::new();
+    pub fn report_error(stage: &'static str, error: &anyhow::Error) {
+        use windows::Win32::System::EventLog::*;
+        // Only an internal operation label and numeric OS code are logged, never
+        // caller-controlled payloads, SIDs, paths, tokens or error-chain text.
+        let code = error
+            .chain()
+            .find_map(|e| e.downcast_ref::<windows::core::Error>())
+            .map_or(0, |e| e.code().0);
+        let source: Vec<u16> = vasp_core::broker::SERVICE
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        let message: Vec<u16> = format!("{stage}: HRESULT {code:#010x}")
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        unsafe {
+            if let Ok(log) = RegisterEventSourceW(PCWSTR::null(), PCWSTR(source.as_ptr())) {
+                let _ = ReportEventW(
+                    log,
+                    EVENTLOG_ERROR_TYPE,
+                    0,
+                    1,
+                    None,
+                    0,
+                    Some(&[PCWSTR(message.as_ptr())]),
+                    None,
+                );
+                let _ = DeregisterEventSource(log);
+            }
+        }
+    }
     fn status(state: SERVICE_STATUS_CURRENT_STATE, error: u32) -> Result<()> {
         let _guard = STATUS_LOCK
             .lock()
@@ -80,6 +112,9 @@ mod native {
                 .get()
                 .ok_or_else(|| anyhow::anyhow!("Missing service entry"))?(&STOP)
         });
+        if let Ok(Err(error)) = &result {
+            report_error("service startup/exit", error);
+        }
         let _ = status(
             SERVICE_STOPPED,
             if matches!(result, Ok(Ok(()))) {
@@ -114,4 +149,4 @@ mod native {
     }
 }
 #[cfg(windows)]
-pub use native::{ready, run};
+pub use native::{ready, report_error, run};
