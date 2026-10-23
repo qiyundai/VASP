@@ -41,7 +41,7 @@ Install Visual Studio C++ build tools and the Windows SDK. Rust is pinned in `ru
 
 The wrapper uses a project-local Rust installation under `.tools` when present, otherwise an installed Cargo. Use a normal user terminal for integration tests: the tests deliberately tighten temporary-directory ACLs and exercise loopback TLS, which some development sandboxes prohibit. Do not run the desktop elevated merely to hide coverage warnings.
 
-The latest broker/IPC increment is staged in `dist/broker-ipc`; `Start-Vasp.ps1` prefers it when present. That build uses Direct3D 12 and a stable status area to address app-window flicker. [Broker setup and authorization details](docs/BROKER.md) describe the separate service, local command catalog, and tests. It is not installed automatically, and blocking remains disabled.
+The latest locally packaged broker recovery increment is staged in `dist/broker-recovery`; `Start-Vasp.ps1` prefers it when present. Generated previews are excluded from Git. That build retains Direct3D 12 and a stable status area to address app-window flicker. [Broker setup and authorization details](docs/BROKER.md) describe the separate service, local command catalog, and tests. The hosted Windows suite passes 43 Rust tests and 13 elevated service scenarios, including a standard-user client. This does not validate actual packet filtering, a watchdog for hung brokers, reboot or sleep/resume recovery. The service is not installed automatically, and blocking remains disabled.
 
 ## Enroll another PC
 

@@ -24,7 +24,7 @@ SQLite data and identity files inherit ACLs for the current user, SYSTEM, and Ad
 
 ## Enforcement boundary
 
-Automatic enforcement is hard-disabled in this preview. A separate broker service and authenticated local pipe are implemented; see [BROKER.md](docs/BROKER.md). Its handler always denies block proposals and never opens a WFP session. The service has not been installed or positively validated under SCM on this development PC. No UI, remote protocol, or model operation calls the WFP block method. There is no generic command, script, registry-write, file-write, patch, or process-termination API.
+Automatic enforcement is hard-disabled in this preview. A separate broker service and authenticated local pipe are implemented; see [BROKER.md](docs/BROKER.md). Its handler always denies block proposals and never opens a WFP session. SCM authentication and bounded service recovery passed on a disposable hosted Windows runner, including a standard-user client. The service is not installed on the development PC. No UI, remote protocol, or model operation calls the WFP block method. There is no generic command, script, registry-write, file-write, patch, or process-termination API.
 
 Future activation requires an administrator-owned endpoint policy and authenticated local-only broker IPC, qualified local evidence validation, transactional action journals, protected management/recovery targets, three-block concurrency and rolling duration limits, and an independently tested watchdog. Dynamic WFP sessions provide cleanup when sessions end; they alone do not address hung processes, sleep/resume, or reconciliation failures. Flipping the release constant is not a supported activation procedure.
 

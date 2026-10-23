@@ -6,6 +6,7 @@ if (-not $DisposableEnvironment) { throw 'This suite kills its broker and corrup
 $projectRoot = Split-Path $PSScriptRoot -Parent
 $cli = Join-Path $projectRoot 'dist\broker-ipc\vasp.exe'
 if (-not (Test-Path -LiteralPath $cli)) { $cli = Join-Path $projectRoot 'dist\vasp.exe' }
+if (Test-Path -LiteralPath (Join-Path $projectRoot 'dist\broker-recovery\vasp.exe')) { $cli = Join-Path $projectRoot 'dist\broker-recovery\vasp.exe' }
 $data = Join-Path $projectRoot 'data\broker-service-test'
 $state = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'VASP\Broker'
 $policyFile = Join-Path $state 'policy.json'

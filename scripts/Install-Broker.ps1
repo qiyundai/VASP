@@ -8,6 +8,7 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
 $source = Join-Path $projectRoot 'dist\vasp-broker.exe'
 if (Test-Path -LiteralPath (Join-Path $projectRoot 'dist\broker-ipc\vasp-broker.exe')) { $source = Join-Path $projectRoot 'dist\broker-ipc\vasp-broker.exe' }
+if (Test-Path -LiteralPath (Join-Path $projectRoot 'dist\broker-recovery\vasp-broker.exe')) { $source = Join-Path $projectRoot 'dist\broker-recovery\vasp-broker.exe' }
 if ($DeviceId -eq [Guid]::Empty) { throw 'Use the endpoint device UUID shown by vasp identity.' }
 $sid = [System.Security.Principal.SecurityIdentifier]::new($OperatorSid)
 if ($sid.Value -ne $OperatorSid -or $OperatorSid -notmatch '^S-1-5-21-\d+-\d+-\d+-\d+$') { throw 'Select one explicit local/domain user SID, not a group or service identity.' }

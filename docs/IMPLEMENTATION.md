@@ -4,7 +4,7 @@ This repository contains a runnable Windows observe-only preview and security pr
 
 | Plan area | Implemented | Remaining before the planned release |
 |---|---|---|
-| Foundation | Rust workspace; strict interfaces; pinned mTLS enrollment; separate broker service and administrator-owned state validation; authenticated local IPC; durable request receipts | Elevated service validation; WFP lease journal integration; certificate rotation; audit replication |
+| Foundation | Rust workspace; strict interfaces; pinned mTLS enrollment; broker service with protected state, authenticated local IPC and durable receipts; hosted elevated/standard-user service validation | Windows 11 elevated matrix; WFP lease journal integration; certificate rotation; audit replication |
 | Isolation | AppContainer parser/fetch/model workers, Job limits, pipe handle allowlist; live parser conformance probe | Restricted collector identity; comprehensive OS isolation matrix; independent unsafe-wrapper review |
 | Inventory/events | Native Windows read-only collection; hourly inventory; 30-second event polling with partial coverage | ETW/subscription-driven refresh; broader persistence/package coverage; update supersedence |
 | Intelligence | CISA KEV, current-month MSRC, paginated incremental NVD, EPSS, explicit CVE/OSV queries, curated Chromium RSS | Historical bootstrap; complete withdrawn/rejected advisory reconciliation; OSV automatic inventory integration/pagination; broader curated research |
@@ -12,7 +12,7 @@ This repository contains a runnable Windows observe-only preview and security pr
 | LAN | Passive neighbors; up to ten enrolled observation clients; agent-initiated reporting; coordinator downtime backoff | Selected-interface active discovery and selected-target service checks; reliable classification of VPN/public/physical interfaces |
 | Native UI | Desktop/tray, coverage, findings/evidence, devices, schedules, reports, audit history, settings and local stop control | Enrollment wizard; validated service lifecycle; accessible notification UX; usable active-block controls after broker integration |
 | AI | Disabled by default; direct API/LAN adapters; minimal projection; hostile-output validation; request/token/cost reservations | Live configured-provider tests; multi-step constrained investigation executor; verified pricing integration; documented subscription adapter remains out of scope |
-| Bounded actions | Pure authorization/limits; dynamic WFP primitive; broker service/IPC with all proposals denied; request journal/replay/clock/quotas | Elevated service validation, evidence qualification, gated WFP integration, admin activation, watchdog, transactional lease journal and crash/hang/reboot/sleep/clock recovery tests |
+| Bounded actions | Pure authorization/limits; dynamic WFP primitive; broker service/IPC with all proposals denied; request journal/replay/clock/quotas; 13 hosted service fault/authorization scenarios | Evidence qualification, gated WFP integration, admin activation, watchdog, transactional lease journal and full WFP crash/hang/reboot/sleep/clock recovery tests |
 | Updates | Pure signed-metadata/hash/expiry/rollback verifier | Authenticode, production trust roots, installer, staged rollout, key rotation, verified recovery |
 | Acceptance | Unit/regression tests, loopback mTLS, real inventory/feed tests, parser AppContainer probe, native screenshot review | Full negative TLS/IPC matrix, sustained coverage-guided fuzzing, storage fault injection, WFP VM matrix, 72-hour soak, independent security review |
 
