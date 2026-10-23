@@ -1,0 +1,23 @@
+name: Verify Windows build
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install pinned toolchain
+        run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --locked
+      - run: cargo test --workspace --locked
+      - run: cargo build --workspace --release --locked
+      - name: Check parser isolation
+        run: |
+          target/release/vasp.exe --data data/ci init
+          target/release/vasp.exe --data data/ci sandbox-check
+      - name: Package broker preview
+        run: ./scripts/Package-Preview.ps1 -SkipBuild
+      - name: Test privileged service on disposable runner
+        run: ./scripts/Test-BrokerService.ps1

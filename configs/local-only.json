@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "feeds_enabled": true,
+  "model": {
+    "provider": { "provider": "disabled" },
+    "model": "",
+    "cloud_opt_in": false,
+    "daily_tokens": 50000,
+    "daily_microusd": 0,
+    "ceiling_microusd_per_million_tokens": 0
+  }
+}

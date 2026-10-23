@@ -1,0 +1,21 @@
+[package]
+name = "vasp-broker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+vasp-core = { path = "../core" }
+vasp-platform = { path = "../platform" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+rusqlite.workspace = true
+
+[dev-dependencies]
+tempfile = "=3.23.0"
+
+[lints]
+workspace = true

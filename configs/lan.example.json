@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "feeds_enabled": true,
+  "model": {
+    "provider": {
+      "provider": "lan",
+      "endpoint": "https://192.168.1.10:8443/v1/chat/completions",
+      "ca_pem": "REPLACE_WITH_YOUR_PEM_CA_CERTIFICATE"
+    },
+    "model": "REPLACE_WITH_YOUR_MODEL_IDENTIFIER",
+    "cloud_opt_in": false,
+    "daily_tokens": 50000,
+    "daily_microusd": 0,
+    "ceiling_microusd_per_million_tokens": 0
+  }
+}

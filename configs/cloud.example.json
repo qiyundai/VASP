@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "feeds_enabled": true,
+  "model": {
+    "provider": { "provider": "open_ai" },
+    "model": "REPLACE_WITH_YOUR_MODEL_IDENTIFIER",
+    "cloud_opt_in": false,
+    "daily_tokens": 50000,
+    "daily_microusd": 0,
+    "ceiling_microusd_per_million_tokens": 0
+  }
+}
