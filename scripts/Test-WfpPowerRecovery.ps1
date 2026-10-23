@@ -23,11 +23,15 @@ if ($Phase -eq 'Prepare') {
     $record | ConvertTo-Json | Set-Content -LiteralPath $metadata
     $process = Start-Process -FilePath $exe -ArgumentList @('power-arm','--disposable-vm',('"' + $checkpoint + '"')) -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $directory 'stdout.log') -RedirectStandardError (Join-Path $directory 'stderr.log')
     $end = [DateTime]::UtcNow.AddSeconds(10)
-    while (-not (Test-Path -LiteralPath $checkpoint)) {
+    $armed = $null
+    while ($null -eq $armed) {
         if ($process.HasExited -or [DateTime]::UtcNow -ge $end) { throw 'Power fixture failed to arm; inspect its local logs.' }
+        if (Test-Path -LiteralPath $checkpoint) {
+            # File creation can be observed before the child has flushed the complete JSON.
+            try { $armed = Get-Content -LiteralPath $checkpoint -Raw | ConvertFrom-Json -ErrorAction Stop } catch { $armed = $null }
+        }
         Start-Sleep -Milliseconds 100
     }
-    $armed = Get-Content -LiteralPath $checkpoint -Raw | ConvertFrom-Json
     if (-not $armed.key -or $armed.armed_at -le 0) { throw 'Invalid power checkpoint.' }
     Write-Output "ARMED: $Transition fixture. Within 60 seconds, manually $Transition this disposable VM. For Sleep, remain asleep at least 10 seconds. Then run this script with -Phase Verify -Transition $Transition -DisposableEnvironment."
     Write-Output 'The script never reboots or suspends your development computer. This is not yet a passed test.'

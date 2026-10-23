@@ -6,7 +6,7 @@ mod harness {
     use anyhow::{Context, Result, ensure};
     use std::{
         io::{Read, Write},
-        net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream},
+        net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream, UdpSocket},
         os::windows::process::CommandExt,
         process::{Child, Command, Stdio},
         sync::mpsc::{self, Receiver},
@@ -66,7 +66,10 @@ mod harness {
         }
     }
     fn fixture(ip: IpAddr) -> Result<(TcpListener, SocketAddr)> {
-        let socket = TcpListener::bind(SocketAddr::new(ip, 0))?;
+        fixture_at(SocketAddr::new(ip, 0))
+    }
+    fn fixture_at(address: SocketAddr) -> Result<(TcpListener, SocketAddr)> {
+        let socket = TcpListener::bind(address)?;
         let address = socket.local_addr()?;
         socket.set_nonblocking(true)?;
         // Drain accepted connections so failures cannot be caused by a full listen backlog.
@@ -94,8 +97,29 @@ mod harness {
     }
     impl Worker {
         fn start(address: SocketAddr, mode: &str, seconds: u64) -> Result<Self> {
+            Self::start_with_owner_deadline(
+                address,
+                mode,
+                seconds,
+                seconds.saturating_add(2).min(600),
+            )
+        }
+        fn start_with_owner_deadline(
+            address: SocketAddr,
+            mode: &str,
+            seconds: u64,
+            owner_seconds: u64,
+        ) -> Result<Self> {
+            ensure!((1..=600).contains(&owner_seconds), "Invalid owner deadline");
+            let guard = RecoveryGuard::new(wfp::recovery_sample(), seconds, HEARTBEAT_MS)
+                .map_err(anyhow::Error::msg)?;
             let mut child = command()?
-                .args(["worker", &address.to_string(), mode])
+                .args([
+                    "worker",
+                    &address.to_string(),
+                    mode,
+                    &owner_seconds.to_string(),
+                ])
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::inherit())
@@ -144,8 +168,7 @@ mod harness {
                 job: Some(job),
                 events,
                 key: uuid::Uuid::nil(),
-                guard: RecoveryGuard::new(wfp::recovery_sample(), seconds, HEARTBEAT_MS)
-                    .map_err(anyhow::Error::msg)?,
+                guard,
             };
             // Worker cannot open WFP before successful job assignment. EOF also refuses startup.
             instance
@@ -202,7 +225,7 @@ mod harness {
             let _ = self.child.wait();
         }
     }
-    fn worker(address: SocketAddr, mode: &str) -> Result<()> {
+    fn worker(address: SocketAddr, mode: &str, seconds: u64) -> Result<()> {
         ensure!(
             mode == "hang" || mode == "heartbeat",
             "Unknown fixture mode"
@@ -210,22 +233,43 @@ mod harness {
         let mut go = [0u8; 1];
         std::io::stdin().read_exact(&mut go)?;
         ensure!(go == *b"G", "Supervisor did not authorize fixture startup");
-        let session = DynamicSession::open()?;
-        let id = session.add(&target(address, false)?)?;
-        let key = session.key(id)?;
+        ensure!((1..=600).contains(&seconds), "Invalid owner deadline");
+        let mut session = LeaseSession::open()?;
+        let inspector = DynamicSession::open()?;
+        let id = session.add(&target(address, false)?, vasp_core::now() + seconds)?;
+        let key = inspector.key(id)?;
         let mut out = std::io::stdout().lock();
         out.write_all(&id.to_le_bytes())?;
         out.write_all(key.as_bytes())?;
         out.flush()?;
-        let mut sequence = 0u64;
-        loop {
-            thread::sleep(Duration::from_millis(100));
-            if mode == "heartbeat" {
-                sequence += 1;
-                out.write_all(&sequence.to_le_bytes())?;
-                out.flush()?;
+        drop(out);
+        if mode == "hang" {
+            // Fault injection deliberately stops the owner's expiry loop as well as its heartbeat.
+            loop {
+                thread::sleep(Duration::from_secs(1));
             }
         }
+        // A blocked heartbeat pipe must never stall the owner's independent expiry loop.
+        thread::spawn(|| {
+            let mut sequence = 0u64;
+            let mut out = std::io::stdout().lock();
+            loop {
+                thread::sleep(Duration::from_millis(100));
+                sequence += 1;
+                if out
+                    .write_all(&sequence.to_le_bytes())
+                    .and_then(|_| out.flush())
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        });
+        while inspector.contains_key(key)? {
+            session.expire()?;
+            thread::sleep(POLL);
+        }
+        Ok(())
     }
     fn targeting(ip: IpAddr) -> Result<()> {
         let (_listener, address) = fixture(ip)?;
@@ -235,6 +279,20 @@ mod harness {
             "Fixture unavailable before filtering"
         );
         let inspector = DynamicSession::open()?;
+        let udp_receiver = UdpSocket::bind(address)?;
+        udp_receiver.set_read_timeout(Some(Duration::from_millis(500)))?;
+        let udp_sender = UdpSocket::bind(SocketAddr::new(ip, 0))?;
+        let other_address = if ip.is_ipv4() {
+            Some(fixture_at(SocketAddr::new(
+                Ipv4Addr::new(127, 0, 0, 2).into(),
+                address.port(),
+            ))?)
+        } else {
+            None
+        };
+        if let Some((_, alternative)) = &other_address {
+            ensure!(connect(*alternative), "Alternate address baseline failed");
+        }
         for inbound in [false, true] {
             let session = DynamicSession::open()?;
             let id = session.add(&target(address, inbound)?)?;
@@ -245,6 +303,15 @@ mod harness {
                 "Matching TCP flow was not blocked: {address}, inbound={inbound}"
             );
             ensure!(connect(other), "Unrelated port was blocked");
+            if let Some((_, alternative)) = &other_address {
+                ensure!(connect(*alternative), "Unrelated IPv4 address was blocked");
+            }
+            udp_sender.send_to(b"fixture", address)?;
+            let mut datagram = [0u8; 16];
+            ensure!(
+                udp_receiver.recv_from(&mut datagram)?.0 == 7 && &datagram[..7] == b"fixture",
+                "TCP filter blocked UDP"
+            );
             session.remove(id)?;
             ensure!(
                 !inspector.contains_key(key)? && connect(address),
@@ -297,6 +364,15 @@ mod harness {
             Ok(!inspector.contains_key(key)? && connect(address))
         })?;
         println!("PASS: native lease expiry and duration bound");
+        let mut child = Worker::start_with_owner_deadline(address, "heartbeat", 30, 2)?;
+        ensure!(
+            !connect(address),
+            "Independent expiry fixture did not block"
+        );
+        // Do not service the supervisor: emulate a stalled watchdog while owner keeps running.
+        eventually(|| Ok(!inspector.contains_key(child.key)? && connect(address)))?;
+        child.stop()?;
+        println!("PASS: owner expires its filter while supervisor stops processing heartbeats");
         for (mode, seconds, expected) in [
             ("hang", 30, "heartbeat deadline missed"),
             ("heartbeat", 3, "lease expired"),
@@ -356,7 +432,7 @@ mod harness {
             .as_slice()
         {
             ["suite", "--disposable-vm"] => suite(),
-            ["worker", address, mode] => worker(address.parse()?, mode),
+            ["worker", address, mode, seconds] => worker(address.parse()?, mode, seconds.parse()?),
             ["probe", address] => {
                 let address = address.parse()?;
                 target(address, false)?;
