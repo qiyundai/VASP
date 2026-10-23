@@ -227,8 +227,9 @@ impl Server {
             if !vasp_core::broker::valid_sid(sid) {
                 bail!("Invalid SID");
             }
-            // Explicit data/read-attribute/synchronize rights: no FILE_CREATE_PIPE_INSTANCE.
-            sddl.push_str(&format!("(A;;0x100083;;;{sid})"));
+            // Data/read-attribute/synchronize/READ_CONTROL, never FILE_CREATE_PIPE_INSTANCE.
+            // READ_CONTROL lets a standard client authenticate this pipe's owner.
+            sddl.push_str(&format!("(A;;0x120083;;;{sid})"));
         }
         sddl.push_str("S:(ML;;NW;;;ME)");
         let sddl = wide(&sddl);
@@ -331,7 +332,7 @@ fn connect(name: &str) -> Result<Channel> {
     let handle = unsafe {
         CreateFileW(
             PCWSTR(name.as_ptr()),
-            0x100083,
+            0x120083,
             FILE_SHARE_NONE,
             None,
             OPEN_EXISTING,
@@ -360,22 +361,54 @@ impl Drop for ServiceHandle {
 }
 fn verify_service_server(pipe: HANDLE) -> Result<()> {
     let mut pid = 0;
+    let mut session = u32::MAX;
     unsafe {
         GetNamedPipeServerProcessId(pipe, &mut pid)?;
+        GetNamedPipeServerSessionId(pipe, &mut session)?;
     }
-    let process = Handle(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)? });
-    let mut token = HANDLE::default();
+    // Do not open SYSTEM's process token: standard callers cannot do that without
+    // debug privilege. Authenticate the connected object and authoritative SCM state.
+    let mut owner = PSID::default();
+    let mut sd = PSECURITY_DESCRIPTOR::default();
     unsafe {
-        OpenProcessToken(process.0, TOKEN_QUERY, &mut token)?;
+        GetSecurityInfo(
+            pipe,
+            SE_KERNEL_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            Some(&mut owner),
+            None,
+            None,
+            None,
+            Some(&mut sd),
+        )
+        .ok()?;
     }
-    let who = identity(Handle(token).0)?;
-    if who.sid != "S-1-5-18" || who.app_container || who.integrity < 0x4000 || who.session != 0 {
-        bail!("Pipe server is not a SYSTEM service");
+    let _sd = Local(sd);
+    if session != 0 || !matches!(sid_string(owner)?.as_str(), "S-1-5-18" | "S-1-5-32-544") {
+        bail!("Pipe is not owned by a privileged session-zero service");
     }
     let scm = ServiceHandle(unsafe { OpenSCManagerW(None, None, SC_MANAGER_CONNECT)? });
     let name = wide(vasp_core::broker::SERVICE);
-    let service =
-        ServiceHandle(unsafe { OpenServiceW(scm.0, PCWSTR(name.as_ptr()), SERVICE_QUERY_STATUS)? });
+    let service = ServiceHandle(unsafe {
+        OpenServiceW(
+            scm.0,
+            PCWSTR(name.as_ptr()),
+            SERVICE_QUERY_STATUS | SERVICE_QUERY_CONFIG,
+        )?
+    });
+    // Windows documents an 8 KiB maximum. Aligned storage remains live for all pointers.
+    let mut config_storage = vec![0usize; 8192 / std::mem::size_of::<usize>()];
+    let config = config_storage.as_mut_ptr().cast::<QUERY_SERVICE_CONFIGW>();
+    let mut needed = 0;
+    unsafe {
+        QueryServiceConfigW(service.0, Some(config), 8192, &mut needed)?;
+    }
+    let config = unsafe { &*config };
+    if config.dwServiceType != SERVICE_WIN32_OWN_PROCESS
+        || !unsafe { config.lpServiceStartName.to_string()? }.eq_ignore_ascii_case("LocalSystem")
+    {
+        bail!("Registered broker must be a dedicated LocalSystem service");
+    }
     let mut status = SERVICE_STATUS_PROCESS::default();
     let mut needed = 0;
     let buffer = unsafe {
