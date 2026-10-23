@@ -18,7 +18,7 @@ This repository contains a runnable Windows observe-only preview and security pr
 
 ## Repository base
 
-The supplied workspace was empty and had no Git remote. A local `trunk` repository was initialized; no authoritative upstream or live default branch exists. No remote was invented and no code was published. Once a remote is supplied, query its live HEAD/default branch, fetch the exact commit, and verify ancestry before dependent changes or release validation.
+The user authorized creation of the public [qiyundai/VASP](https://github.com/qiyundai/VASP) repository after a source-only publication review. Its authoritative remote is `https://github.com/qiyundai/VASP.git`; its live default branch was verified as `trunk`. Query live remote HEAD, fetch the exact commit, and verify ancestry before dependent changes or release validation. Historical validation records before initial commit `015c8d1` refer to the former local-only workspace.
 
 ## Intended process flow
 

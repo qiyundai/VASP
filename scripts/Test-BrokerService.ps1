@@ -21,6 +21,7 @@ $results = [Collections.Generic.List[object]]::new()
 $installed = $false
 $policyBackup = $null
 $policyAcl = $null
+$probeUser = $null
 
 function Passed([string]$name) {
     $results.Add([ordered]@{name=$name;passed=$true})
@@ -115,6 +116,40 @@ try {
         Assert-Receipt $r $true
     }
     Passed 'SCM-authenticated production client and typed operations'
+    # Use a separate ordinary local account: an elevated client alone does not
+    # establish that the desktop's normal user token can authenticate SYSTEM.
+    $probeName = 'vasptest' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
+    $probePassword = ConvertTo-SecureString ('Aa1!' + [Guid]::NewGuid().ToString('N')) -AsPlainText -Force
+    $probeUser = New-LocalUser -Name $probeName -Password $probePassword -AccountNeverExpires -UserMayNotChangePassword
+    $usersGroup = Get-LocalGroup -SID 'S-1-5-32-545'
+    Add-LocalGroupMember -Group $usersGroup -Member $probeUser
+    $probeRoot = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) ('VASP-Test-' + [Guid]::NewGuid().ToString('N'))
+    $probeAcl = [Security.AccessControl.DirectorySecurity]::new()
+    $probeAcl.SetSecurityDescriptorSddlForm(('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;' + $probeUser.SID.Value + ')'))
+    [IO.FileSystemAclExtensions]::Create([IO.DirectoryInfo]::new($probeRoot), $probeAcl)
+    $probeData = Join-Path $probeRoot 'data'
+    [IO.FileSystemAclExtensions]::Create([IO.DirectoryInfo]::new($probeData), $probeAcl)
+    $probeCli = Join-Path $probeRoot 'vasp.exe'
+    Copy-Item -LiteralPath $cli -Destination $probeCli
+    Copy-Item -LiteralPath (Join-Path $data 'vasp.db') -Destination (Join-Path $probeData 'vasp.db')
+    Stop-TestBroker
+    $probePolicy = [Text.Encoding]::UTF8.GetString($policyBackup) | ConvertFrom-Json
+    $probePolicy.callers += [pscustomobject]@{sid=$probeUser.SID.Value;role='observer'}
+    [IO.File]::WriteAllText($policyFile, ($probePolicy | ConvertTo-Json -Depth 8))
+    Start-TestBroker
+    $probeCredential = [Management.Automation.PSCredential]::new(('.\' + $probeName), $probePassword)
+    $probeOutput = Join-Path $probeRoot 'stdout.json'
+    $probeError = Join-Path $probeRoot 'stderr.txt'
+    $probe = Start-Process -FilePath $probeCli -ArgumentList @('--data',('"' + $probeData + '"'),'broker','status') `
+        -Credential $probeCredential -LoadUserProfile -WorkingDirectory $probeRoot -WindowStyle Hidden `
+        -RedirectStandardOutput $probeOutput -RedirectStandardError $probeError -PassThru
+    if (-not $probe.WaitForExit(15000)) { $probe.Kill(); throw 'Standard-user client timed out.' }
+    if ($probe.ExitCode -ne 0) { throw ('Standard-user client failed: ' + [IO.File]::ReadAllText($probeError)) }
+    Assert-Receipt ([IO.File]::ReadAllText($probeOutput) | ConvertFrom-Json) $true
+    Stop-TestBroker
+    [IO.File]::WriteAllBytes($policyFile, $policyBackup)
+    Start-TestBroker
+    Passed 'Enrolled standard-user production client authenticates the SYSTEM broker'
     foreach ($overrides in @(@{device_id=[Guid]::NewGuid().ToString()}, @{session=[Guid]::NewGuid().ToString()},
         @{policy_version=999}, @{issued_at=1})) {
         Assert-Receipt (Invoke-Wire @{operation='status'} $overrides) $false
@@ -201,8 +236,9 @@ try {
         & "$env:SystemRoot\System32\sc.exe" delete VaspBroker | Out-Null
         # Preserve protected files for diagnostics; no recursive deletion.
     }
+    if ($probeUser) { Remove-LocalUser -SID $probeUser.SID }
     [ordered]@{schema=1;automatic_blocking=$false;tests=@($results.ToArray());
-        untested=@('WFP filters','hung broker process','reboot','sleep/resume','standard-user client','remote SMB');
+        untested=@('WFP filters','hung broker process','reboot','sleep/resume','remote SMB');
         source_commit=(git -C $projectRoot rev-parse HEAD)} | ConvertTo-Json -Depth 8 |
         Set-Content -LiteralPath (Join-Path $data 'service-test-results.json') -Encoding utf8NoBOM
 }
